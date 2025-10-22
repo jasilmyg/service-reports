@@ -145,7 +145,7 @@ def process_report(complaints_file, mop_file, selected_brand):
 
     buffer.seek(0)
     st.download_button(
-        label="💾 Download Beautiful Excel Report",
+        label="💾 Download Excel Report",
         data=buffer,
         file_name=f"Complaint_Report_{selected_brand}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
