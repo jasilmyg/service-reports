@@ -21,7 +21,6 @@ st.markdown("""
         background-color: #f7f9fc;
         color: #2c3e50;
     }
-
     .title {
         font-size: 2rem;
         font-weight: 700;
@@ -29,33 +28,12 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1.5rem;
     }
-
     div[data-testid="stFileUploader"] {
         background-color: #ffffff;
         border: 2px dashed #0078d7;
         border-radius: 10px;
         padding: 20px;
     }
-
-    table {
-        border-collapse: collapse;
-        width: 100%;
-        background-color: white;
-        border-radius: 10px;
-        overflow: hidden;
-        border: 1px solid #e0e6ed;
-    }
-    thead tr {
-        background-color: #0078d7;
-        color: white;
-    }
-    tbody tr:nth-child(even) {
-        background-color: #f2f6fb;
-    }
-    tbody tr:hover {
-        background-color: #e8f0fd;
-    }
-
     .stDownloadButton button {
         background: linear-gradient(90deg, #0078d7, #0094ff);
         color: white;
@@ -83,124 +61,89 @@ st.markdown("<div class='title'>📊 Complaint Report by Branch</div>", unsafe_a
 uploaded_complaints = st.file_uploader("📂 Upload 'Data for Working.xlsx'", type=["xlsx"])
 uploaded_mop = st.file_uploader("📂 Upload 'MOP LIST.xlsx'", type=["xlsx"])
 
-if uploaded_complaints is None or uploaded_mop is None:
-    st.info("Please upload both 'Data for Working.xlsx' and 'MOP LIST.xlsx' to proceed.")
-    st.stop()
-
 # ----------------------------------------
-# Load Files
+# Processing Function
 # ----------------------------------------
-try:
-    df_complaints = pd.read_excel(uploaded_complaints)
-    df_mop = pd.read_excel(uploaded_mop)
-    df_mop = df_mop.rename(columns={'Item code': 'Item Code'})
-except Exception as e:
-    st.error(f"⚠️ Error reading files: {e}")
-    st.stop()
+def process_report(complaints_file, mop_file, selected_brand):
+    # Load files
+    df_complaints = pd.read_excel(complaints_file)
+    df_mop = pd.read_excel(mop_file).rename(columns={'Item code':'Item Code'})
 
-# ----------------------------------------
-# Data Processing
-# ----------------------------------------
-# Merge DataFrames
-df = pd.merge(df_complaints, df_mop, on='Item Code', how='left')
+    # Merge
+    df = pd.merge(df_complaints, df_mop, on='Item Code', how='left')
 
-# Ensure numeric types
-df['MOP'] = pd.to_numeric(df['MOP'], errors='coerce')
-df['Days'] = pd.to_numeric(df['Days'], errors='coerce')
+    # Ensure numeric
+    df['MOP'] = pd.to_numeric(df['MOP'], errors='coerce')
+    df['Days'] = pd.to_numeric(df['Days'], errors='coerce')
+    df = df.dropna(subset=['MOP','Days','Branch'])
 
-# Drop invalid rows
-df = df.dropna(subset=['MOP', 'Days', 'Branch'])
+    # Filter by brand
+    if selected_brand != 'All':
+        df = df[df['Brand']==selected_brand]
 
-# Brand filter
-brands = sorted(df['Brand'].dropna().unique())
-brands.insert(0, 'All')
+    if df.empty:
+        st.info("No data available for the selected brand.")
+        return
 
-with st.sidebar:
-    st.markdown("### 🔍 Filter Options")
-    selected_brand = st.selectbox("Select Brand", options=brands)
-    st.markdown("---")
-    st.markdown("💡 *Use this filter to view reports for a specific brand.*")
-
-filtered_df = df if selected_brand == 'All' else df[df['Brand'] == selected_brand]
-
-# ----------------------------------------
-# Report Generation
-# ----------------------------------------
-if not filtered_df.empty:
-    report_df = filtered_df.groupby('Branch').agg(
-        SumofMOP=('MOP', 'sum'),
-        AverageofDays=('Days', 'mean'),
-        CountofComplaintMode=('Complaint Mode', 'count')
-    ).reset_index()
-
-    report_df = report_df.rename(columns={
-        'SumofMOP': 'Sum of MOP',
-        'AverageofDays': 'Average of Days',
-        'CountofComplaintMode': 'Count of Complaint Mode'
+    # Group by branch
+    report_df = df.groupby('Branch').agg(
+        SumofMOP=('MOP','sum'),
+        AverageofDays=('Days','mean'),
+        CountofComplaintMode=('Complaint Mode','count')
+    ).reset_index().rename(columns={
+        'SumofMOP':'Sum of MOP',
+        'AverageofDays':'Average of Days',
+        'CountofComplaintMode':'Count of Complaint Mode'
     }).sort_values('Sum of MOP', ascending=False)
 
-    # ----------------------------------------
-    # Dynamic Number Formatting Function
-    # ----------------------------------------
+    # Dynamic number formatting
     def format_dynamic(x):
-        if pd.isna(x):
-            return ""
-        elif float(x).is_integer():
-            return int(x)
-        else:
-            return round(x, 1)
+        if pd.isna(x): return ""
+        return int(x) if float(x).is_integer() else round(x,1)
 
-    # Display in Streamlit
     display_df = report_df.copy()
     display_df['Sum of MOP'] = display_df['Sum of MOP'].apply(format_dynamic)
     display_df['Average of Days'] = display_df['Average of Days'].apply(format_dynamic)
+
     st.markdown("### 📈 Branch Performance Summary")
     st.dataframe(display_df)
 
-    # ----------------------------------------
-    # Styled Excel Export
-    # ----------------------------------------
+    # Excel export
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         report_df.to_excel(writer, index=False, sheet_name='Report')
         workbook = writer.book
         worksheet = writer.sheets['Report']
 
-        # Formats
-        header_format = workbook.add_format({
-            'bold': True, 'bg_color': '#0078D7', 'font_color': 'white',
-            'border': 1, 'align': 'center', 'valign': 'vcenter'
-        })
-        even_row = workbook.add_format({'bg_color': '#F2F6FB', 'border': 1})
-        odd_row = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
-        number_fmt_int = workbook.add_format({'num_format': '0', 'border': 1})
-        number_fmt_float = workbook.add_format({'num_format': '0.0', 'border': 1})
-        text_fmt = workbook.add_format({'border': 1})
+        header_fmt = workbook.add_format({'bold':True,'bg_color':'#0078D7','font_color':'white','border':1,'align':'center','valign':'vcenter'})
+        even_row = workbook.add_format({'bg_color':'#F2F6FB','border':1})
+        odd_row = workbook.add_format({'bg_color':'#FFFFFF','border':1})
+        int_fmt = workbook.add_format({'num_format':'0','border':1})
+        float_fmt = workbook.add_format({'num_format':'0.0','border':1})
+        text_fmt = workbook.add_format({'border':1})
 
         # Header
-        for col_num, value in enumerate(report_df.columns.values):
-            worksheet.write(0, col_num, value, header_format)
+        for col_num, value in enumerate(report_df.columns):
+            worksheet.write(0,col_num,value,header_fmt)
 
-        # Body with dynamic formatting
-        for row_num, row_data in enumerate(report_df.values, start=1):
-            fmt = even_row if row_num % 2 == 0 else odd_row
-            for col_num, cell_value in enumerate(row_data):
-                if isinstance(cell_value, (int, float)):
-                    if float(cell_value).is_integer():
-                        worksheet.write(row_num, col_num, cell_value, number_fmt_int)
+        # Body
+        for row_num,row_data in enumerate(report_df.values,start=1):
+            fmt = even_row if row_num%2==0 else odd_row
+            for col_num, cell in enumerate(row_data):
+                if isinstance(cell,(int,float)):
+                    if float(cell).is_integer():
+                        worksheet.write(row_num,col_num,cell,int_fmt)
                     else:
-                        worksheet.write(row_num, col_num, round(cell_value,1), number_fmt_float)
+                        worksheet.write(row_num,col_num,round(cell,1),float_fmt)
                 else:
-                    worksheet.write(row_num, col_num, cell_value, text_fmt)
+                    worksheet.write(row_num,col_num,cell,text_fmt)
 
-        # Auto column width
-        for i, col in enumerate(report_df.columns):
-            max_len = max(report_df[col].astype(str).map(len).max(), len(col)) + 2
-            worksheet.set_column(i, i, max_len)
+        # Auto width
+        for i,col in enumerate(report_df.columns):
+            max_len = max(report_df[col].astype(str).map(len).max(),len(col))+2
+            worksheet.set_column(i,i,max_len)
 
     buffer.seek(0)
-
-    # Download button
     st.download_button(
         label="💾 Download Beautiful Excel Report",
         data=buffer,
@@ -208,5 +151,14 @@ if not filtered_df.empty:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-else:
-    st.info("No data available for the selected brand.")
+# ----------------------------------------
+# Only run if both files uploaded
+# ----------------------------------------
+if uploaded_complaints and uploaded_mop:
+    # Temporary read to get brands
+    temp_df = pd.read_excel(uploaded_complaints)
+    brands = sorted(temp_df['Brand'].dropna().unique())
+    brands.insert(0,'All')
+    selected_brand = st.selectbox("Select Brand", brands)
+
+    process_report(uploaded_complaints, uploaded_mop, selected_brand)
