@@ -1,151 +1,185 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import io
 
-# Set the title and favicon that appear in the Browser's tab bar.
+# ----------------------------------------
+# Page Configuration
+# ----------------------------------------
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title="Complaint Report by Branch",
+    page_icon="📊",
+    layout="wide"
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# ----------------------------------------
+# Custom Light-Themed Styling
+# ----------------------------------------
+st.markdown("""
+    <style>
+    html, body, [class*="css"] {
+        font-family: 'Poppins', sans-serif;
+        background-color: #f7f9fc;
+        color: #2c3e50;
+    }
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+    /* Title */
+    .title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #0078d7;
+        text-align: center;
+        margin-bottom: 1.5rem;
+    }
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+    /* File Upload */
+    div[data-testid="stFileUploader"] {
+        background-color: #ffffff;
+        border: 2px dashed #0078d7;
+        border-radius: 10px;
+        padding: 20px;
+    }
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    /* Selectbox */
+    div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        color: #2c3e50 !important;
+        border-radius: 10px !important;
+    }
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    /* Table Styling */
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        background-color: white;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #e0e6ed;
+    }
+    thead tr {
+        background-color: #0078d7;
+        color: white;
+        text-align: left;
+    }
+    tbody tr:nth-child(even) {
+        background-color: #f2f6fb;
+    }
+    tbody tr:hover {
+        background-color: #e8f0fd;
+    }
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+    /* Buttons */
+    .stDownloadButton button {
+        background: linear-gradient(90deg, #0078d7, #0094ff);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 0.6rem 1.2rem;
+    }
+    .stDownloadButton button:hover {
+        background: linear-gradient(90deg, #0094ff, #0078d7);
+        transform: scale(1.02);
+        transition: 0.2s ease-in-out;
+    }
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+    /* Info box */
+    .stAlert {
+        border-radius: 10px;
+        padding: 15px;
+        background-color: #eef5ff;
+        border-left: 4px solid #0078d7;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-    return gdp_df
+# ----------------------------------------
+# Title
+# ----------------------------------------
+st.markdown("<div class='title'>📊 Complaint Report by Branch</div>", unsafe_allow_html=True)
 
-gdp_df = get_gdp_data()
+# ----------------------------------------
+# Upload Section
+# ----------------------------------------
+uploaded_file = st.file_uploader("📂 Upload 'Data for Working.xlsx'", type=["xlsx"])
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+# MOP List
+try:
+    df_mop = pd.read_excel("MOP LIST.xlsx")
+    df_mop = df_mop.rename(columns={'Item code': 'Item Code'})
+except Exception as e:
+    st.error("⚠️ Error loading 'MOP LIST.xlsx'. Please make sure it exists in the same directory.")
+    st.stop()
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+# ----------------------------------------
+# Data Handling
+# ----------------------------------------
+if uploaded_file is not None:
+    df_complaints = pd.read_excel(uploaded_file)
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+    # Merge Data
+    df = pd.merge(df_complaints, df_mop, on='Item Code', how='left')
 
-# Add some spacing
-''
-''
+    # Ensure numeric types
+    df['MOP'] = pd.to_numeric(df['MOP'], errors='coerce')
+    df['Days'] = pd.to_numeric(df['Days'], errors='coerce')
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
+    # Drop invalid rows
+    df = df.dropna(subset=['MOP', 'Days', 'Branch'])
 
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
+    # Brand Filter
+    brands = sorted(df['Brand'].dropna().unique())
+    brands.insert(0, 'All')
 
-countries = gdp_df['Country Code'].unique()
+    with st.sidebar:
+        st.markdown("### 🔍 Filter Options")
+        selected_brand = st.selectbox("Select Brand", options=brands)
+        st.markdown("---")
+        st.markdown("💡 *Use this filter to view reports for a specific brand.*")
 
-if not len(countries):
-    st.warning("Select at least one country")
+    # Apply Filter
+    filtered_df = df if selected_brand == 'All' else df[df['Brand'] == selected_brand]
 
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
+    # ----------------------------------------
+    # Report Generation
+    # ----------------------------------------
+    if not filtered_df.empty:
+        report_df = filtered_df.groupby('Branch').agg(
+            SumofMOP=('MOP', 'sum'),
+            AverageofDays=('Days', 'mean'),
+            CountofComplaintMode=('Complaint Mode', 'count')
+        ).reset_index()
 
-''
-''
-''
+        report_df = report_df.rename(columns={
+            'SumofMOP': 'Sum of MOP',
+            'AverageofDays': 'Average of Days',
+            'CountofComplaintMode': 'Count of Complaint Mode'
+        }).sort_values('Sum of MOP', ascending=False)
 
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+        # ----------------------------------------
+        # Display Data
+        # ----------------------------------------
+        st.markdown("### 📈 Branch Report")
+        st.dataframe(
+            report_df.style.format({'Sum of MOP': '{:,.2f}', 'Average of Days': '{:.1f}'})
         )
+
+        # ----------------------------------------
+        # Download Report
+        # ----------------------------------------
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            report_df.to_excel(writer, index=False)
+        buffer.seek(0)
+
+        st.download_button(
+            label="💾 Download Report as Excel",
+            data=buffer,
+            file_name=f"Complaint_Report_{selected_brand}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    else:
+        st.info("No data available for the selected brand.")
+
+else:
+    st.info("Please upload the data file to proceed.")
