@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # ----------------------------------------
-# Custom Light-Themed Styling
+# Custom Light Theme
 # ----------------------------------------
 st.markdown("""
     <style>
@@ -22,7 +22,6 @@ st.markdown("""
         color: #2c3e50;
     }
 
-    /* Title */
     .title {
         font-size: 2rem;
         font-weight: 700;
@@ -31,7 +30,6 @@ st.markdown("""
         margin-bottom: 1.5rem;
     }
 
-    /* File Upload */
     div[data-testid="stFileUploader"] {
         background-color: #ffffff;
         border: 2px dashed #0078d7;
@@ -39,14 +37,6 @@ st.markdown("""
         padding: 20px;
     }
 
-    /* Selectbox */
-    div[data-baseweb="select"] {
-        background-color: #ffffff !important;
-        color: #2c3e50 !important;
-        border-radius: 10px !important;
-    }
-
-    /* Table Styling */
     table {
         border-collapse: collapse;
         width: 100%;
@@ -58,7 +48,6 @@ st.markdown("""
     thead tr {
         background-color: #0078d7;
         color: white;
-        text-align: left;
     }
     tbody tr:nth-child(even) {
         background-color: #f2f6fb;
@@ -67,7 +56,6 @@ st.markdown("""
         background-color: #e8f0fd;
     }
 
-    /* Buttons */
     .stDownloadButton button {
         background: linear-gradient(90deg, #0078d7, #0094ff);
         color: white;
@@ -81,14 +69,6 @@ st.markdown("""
         transform: scale(1.02);
         transition: 0.2s ease-in-out;
     }
-
-    /* Info box */
-    .stAlert {
-        border-radius: 10px;
-        padding: 15px;
-        background-color: #eef5ff;
-        border-left: 4px solid #0078d7;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -98,25 +78,25 @@ st.markdown("""
 st.markdown("<div class='title'>📊 Complaint Report by Branch</div>", unsafe_allow_html=True)
 
 # ----------------------------------------
-# Upload Section
+# File Upload
 # ----------------------------------------
 uploaded_file = st.file_uploader("📂 Upload 'Data for Working.xlsx'", type=["xlsx"])
 
-# MOP List
+# Load MOP LIST
 try:
     df_mop = pd.read_excel("MOP LIST.xlsx")
     df_mop = df_mop.rename(columns={'Item code': 'Item Code'})
-except Exception as e:
-    st.error("⚠️ Error loading 'MOP LIST.xlsx'. Please make sure it exists in the same directory.")
+except Exception:
+    st.error("⚠️ Error loading 'MOP LIST.xlsx'. Please make sure it exists in the same folder.")
     st.stop()
 
 # ----------------------------------------
-# Data Handling
+# Data Processing
 # ----------------------------------------
 if uploaded_file is not None:
     df_complaints = pd.read_excel(uploaded_file)
 
-    # Merge Data
+    # Merge
     df = pd.merge(df_complaints, df_mop, on='Item Code', how='left')
 
     # Ensure numeric types
@@ -126,7 +106,7 @@ if uploaded_file is not None:
     # Drop invalid rows
     df = df.dropna(subset=['MOP', 'Days', 'Branch'])
 
-    # Brand Filter
+    # Brand filter
     brands = sorted(df['Brand'].dropna().unique())
     brands.insert(0, 'All')
 
@@ -136,7 +116,6 @@ if uploaded_file is not None:
         st.markdown("---")
         st.markdown("💡 *Use this filter to view reports for a specific brand.*")
 
-    # Apply Filter
     filtered_df = df if selected_brand == 'All' else df[df['Brand'] == selected_brand]
 
     # ----------------------------------------
@@ -156,23 +135,69 @@ if uploaded_file is not None:
         }).sort_values('Sum of MOP', ascending=False)
 
         # ----------------------------------------
-        # Display Data
+        # Function to format numbers dynamically
         # ----------------------------------------
-        st.markdown("### 📈 Branch Report")
-        st.dataframe(
-            report_df.style.format({'Sum of MOP': '{:,.2f}', 'Average of Days': '{:.1f}'})
-        )
+        def format_dynamic(x):
+            if pd.isna(x):
+                return ""
+            elif float(x).is_integer():
+                return int(x)
+            else:
+                return round(x, 1)
+
+        # Display in Streamlit
+        display_df = report_df.copy()
+        display_df['Sum of MOP'] = display_df['Sum of MOP'].apply(format_dynamic)
+        display_df['Average of Days'] = display_df['Average of Days'].apply(format_dynamic)
+        st.markdown("### 📈 Branch Performance Summary")
+        st.dataframe(display_df)
 
         # ----------------------------------------
-        # Download Report
+        # Styled Excel Export
         # ----------------------------------------
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            report_df.to_excel(writer, index=False)
+            report_df.to_excel(writer, index=False, sheet_name='Report')
+            workbook = writer.book
+            worksheet = writer.sheets['Report']
+
+            # Formats
+            header_format = workbook.add_format({
+                'bold': True, 'bg_color': '#0078D7', 'font_color': 'white',
+                'border': 1, 'align': 'center', 'valign': 'vcenter'
+            })
+            even_row = workbook.add_format({'bg_color': '#F2F6FB', 'border': 1})
+            odd_row = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+            number_fmt_int = workbook.add_format({'num_format': '0', 'border': 1})
+            number_fmt_float = workbook.add_format({'num_format': '0.0', 'border': 1})
+            text_fmt = workbook.add_format({'border': 1})
+
+            # Header
+            for col_num, value in enumerate(report_df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+
+            # Body with dynamic formatting
+            for row_num, row_data in enumerate(report_df.values, start=1):
+                fmt = even_row if row_num % 2 == 0 else odd_row
+                for col_num, cell_value in enumerate(row_data):
+                    if isinstance(cell_value, (int, float)):
+                        if float(cell_value).is_integer():
+                            worksheet.write(row_num, col_num, cell_value, number_fmt_int)
+                        else:
+                            worksheet.write(row_num, col_num, round(cell_value,1), number_fmt_float)
+                    else:
+                        worksheet.write(row_num, col_num, cell_value, text_fmt)
+
+            # Auto column width
+            for i, col in enumerate(report_df.columns):
+                max_len = max(report_df[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.set_column(i, i, max_len)
+
         buffer.seek(0)
 
+        # Download button
         st.download_button(
-            label="💾 Download Report as Excel",
+            label="💾 Download Beautiful Excel Report",
             data=buffer,
             file_name=f"Complaint_Report_{selected_brand}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -182,4 +207,4 @@ if uploaded_file is not None:
         st.info("No data available for the selected brand.")
 
 else:
-    st.info("Please upload the data file to proceed.")
+    st.info("Please upload the 'Data for Working.xlsx' file to proceed.")
